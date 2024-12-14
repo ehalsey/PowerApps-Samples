@@ -1,0 +1,45 @@
+{
+  "TableName": "new_customtable",
+  "TableDisplayName": "Custom Table",
+  "TableDescription": "A custom table created from JSON",
+  "Fields": [
+    {
+      "FieldName": "new_customfield1",
+      "FieldDisplayName": "Custom Field 1",
+      "FieldType": "String"
+    },
+    {
+      "FieldName": "new_customfield2",
+      "FieldDisplayName": "Custom Field 2",
+      "FieldType": "Picklist",
+      "Options": [
+        {
+          "Label": "Option 1",
+          "Value": 1
+        },
+        {
+          "Label": "Option 2",
+          "Value": 2
+        }
+      ]
+    },
+    {
+      "FieldName": "new_customfield3",
+      "FieldDisplayName": "Custom Field 3",
+      "FieldType": "Lookup",
+      "TargetEntity": "account"
+    }
+  ],
+  "Relationships": [
+    {
+      "RelationshipName": "new_customtable_customentity",
+      "RelatedTableName": "customentity",
+      "RelationshipType": "OneToMany"
+    },
+    {
+      "RelationshipName": "new_customtable_contact",
+      "RelatedTableName": "contact",
+      "RelationshipType": "ManyToMany"
+    }
+  ]
+}
