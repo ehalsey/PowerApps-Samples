@@ -41,16 +41,18 @@ namespace DataverseTableCreator
 
         static void CreateTable(ServiceClient serviceClient, JObject tableDefinition)
         {
-            string tableName = tableDefinition["TableName"].ToString();
-            string tableDisplayName = tableDefinition["TableDisplayName"].ToString();
-            string tableDescription = tableDefinition["TableDescription"].ToString();
+            string tableName = tableDefinition["TableName"]?.ToString() ?? throw new ArgumentNullException("TableName");
+            string tableDisplayName = tableDefinition["TableDisplayName"]?.ToString() ?? throw new ArgumentNullException("TableDisplayName");
+            string tableDisplayCollectionName = tableDefinition["TableDisplayCollectionName"]?.ToString() ?? throw new ArgumentNullException("TableDisplayCollectionName");
+            string tableDescription = tableDefinition["TableDescription"]?.ToString() ?? throw new ArgumentNullException("TableDescription");
 
             var createEntityRequest = new CreateEntityRequest
             {
                 Entity = new EntityMetadata
                 {
                     SchemaName = tableName,
-                    DisplayName = new Label(tableDisplayName, 1033),
+                    DisplayName = new Label(tableDisplayName, 1033), // Singular name
+                    DisplayCollectionName = new Label(tableDisplayCollectionName, 1033), // Plural name
                     Description = new Label(tableDescription, 1033),
                     OwnershipType = OwnershipTypes.UserOwned
                 },
@@ -67,13 +69,13 @@ namespace DataverseTableCreator
 
             serviceClient.Execute(createEntityRequest);
 
-            JArray fields = (JArray)tableDefinition["Fields"];
+            JArray fields = (JArray)(tableDefinition["Fields"] ?? new JArray());
             foreach (JObject field in fields)
             {
                 CreateField(serviceClient, tableName, field);
             }
 
-            JArray relationships = (JArray)tableDefinition["Relationships"];
+            JArray relationships = (JArray)(tableDefinition["Relationships"] ?? new JArray());
             foreach (JObject relationship in relationships)
             {
                 CreateRelationship(serviceClient, tableName, relationship);
@@ -82,9 +84,9 @@ namespace DataverseTableCreator
 
         static void CreateField(ServiceClient serviceClient, string tableName, JObject fieldDefinition)
         {
-            string fieldName = fieldDefinition["FieldName"].ToString();
-            string fieldDisplayName = fieldDefinition["FieldDisplayName"].ToString();
-            string fieldType = fieldDefinition["FieldType"].ToString();
+            string fieldName = fieldDefinition["FieldName"]?.ToString() ?? throw new ArgumentNullException("FieldName");
+            string fieldDisplayName = fieldDefinition["FieldDisplayName"]?.ToString() ?? throw new ArgumentNullException("FieldDisplayName");
+            string fieldType = fieldDefinition["FieldType"]?.ToString() ?? throw new ArgumentNullException("FieldType");
 
             AttributeMetadata attributeMetadata = fieldType switch
             {
@@ -101,26 +103,25 @@ namespace DataverseTableCreator
                     OptionSet = new OptionSetMetadata
                     {
                         IsGlobal = false,
-                        OptionSetType = OptionSetType.Picklist,
-                        Options = new OptionMetadataCollection()
+                        OptionSetType = OptionSetType.Picklist
                     }
                 },
                 "Lookup" => new LookupAttributeMetadata
                 {
                     SchemaName = fieldName,
                     DisplayName = new Label(fieldDisplayName, 1033),
-                    Targets = new string[] { fieldDefinition["TargetEntity"].ToString() }
+                    Targets = new string[] { fieldDefinition["TargetEntity"]?.ToString() ?? throw new ArgumentNullException("TargetEntity") }
                 },
                 _ => throw new NotSupportedException($"Field type '{fieldType}' is not supported.")
             };
 
             if (fieldType == "Picklist")
             {
-                JArray options = (JArray)fieldDefinition["Options"];
+                JArray options = (JArray)(fieldDefinition["Options"] ?? new JArray());
                 foreach (JObject option in options)
                 {
-                    string optionLabel = option["Label"].ToString();
-                    int optionValue = (int)option["Value"];
+                    string optionLabel = option["Label"]?.ToString() ?? throw new ArgumentNullException("Label");
+                    int optionValue = option["Value"]?.ToObject<int>() ?? throw new ArgumentNullException("Value");
                     ((PicklistAttributeMetadata)attributeMetadata).OptionSet.Options.Add(new OptionMetadata(new Label(optionLabel, 1033), optionValue));
                 }
             }
@@ -136,55 +137,88 @@ namespace DataverseTableCreator
 
         static void CreateRelationship(ServiceClient serviceClient, string tableName, JObject relationshipDefinition)
         {
-            string relationshipName = relationshipDefinition["RelationshipName"].ToString();
-            string relatedTableName = relationshipDefinition["RelatedTableName"].ToString();
-            string relationshipType = relationshipDefinition["RelationshipType"].ToString();
+            // Extract properties from the JSON definition
+            string relationshipName = relationshipDefinition["RelationshipName"]?.ToString() ?? throw new ArgumentNullException("RelationshipName");
+            string relatedTableName = relationshipDefinition["RelatedTableName"]?.ToString() ?? throw new ArgumentNullException("RelatedTableName");
+            string relationshipType = relationshipDefinition["RelationshipType"]?.ToString() ?? throw new ArgumentNullException("RelationshipType");
 
-            RelationshipMetadataBase relationshipMetadata = relationshipType switch
+            switch (relationshipType)
             {
-                "OneToMany" => new OneToManyRelationshipMetadata
-                {
-                    SchemaName = relationshipName,
-                    ReferencedEntity = tableName,
-                    ReferencingEntity = relatedTableName,
-                    AssociatedMenuConfiguration = new AssociatedMenuConfiguration
+                case "OneToMany":
+                    // Define the One-to-Many relationship
+                    var oneToManyRelationshipRequest = new CreateOneToManyRequest
                     {
-                        Behavior = AssociatedMenuBehavior.UseCollectionName,
-                        Group = AssociatedMenuGroup.Details,
-                        Label = new Label(relationshipName, 1033),
-                        Order = 10000
-                    }
-                },
-                "ManyToMany" => new ManyToManyRelationshipMetadata
-                {
-                    SchemaName = relationshipName,
-                    Entity1LogicalName = tableName,
-                    Entity2LogicalName = relatedTableName,
-                    Entity1AssociatedMenuConfiguration = new AssociatedMenuConfiguration
-                    {
-                        Behavior = AssociatedMenuBehavior.UseCollectionName,
-                        Group = AssociatedMenuGroup.Details,
-                        Label = new Label(relationshipName, 1033),
-                        Order = 10000
-                    },
-                    Entity2AssociatedMenuConfiguration = new AssociatedMenuConfiguration
-                    {
-                        Behavior = AssociatedMenuBehavior.UseCollectionName,
-                        Group = AssociatedMenuGroup.Details,
-                        Label = new Label(relationshipName, 1033),
-                        Order = 10000
-                    }
-                },
-                _ => throw new NotSupportedException($"Relationship type '{relationshipType}' is not supported.")
-            };
+                        OneToManyRelationship = new OneToManyRelationshipMetadata
+                        {
+                            SchemaName = relationshipName,
+                            ReferencedEntity = tableName,
+                            ReferencingEntity = relatedTableName,
+                            AssociatedMenuConfiguration = new AssociatedMenuConfiguration
+                            {
+                                Behavior = AssociatedMenuBehavior.UseLabel,
+                                Group = AssociatedMenuGroup.Details,
+                                Label = new Label("Related " + tableName, 1033),
+                                Order = 10000
+                            },
+                            CascadeConfiguration = new CascadeConfiguration
+                            {
+                                Assign = CascadeType.NoCascade,
+                                Delete = CascadeType.RemoveLink,
+                                Merge = CascadeType.NoCascade,
+                                Reparent = CascadeType.NoCascade,
+                                Share = CascadeType.NoCascade,
+                                Unshare = CascadeType.NoCascade
+                            }
+                        },
+                        Lookup = new LookupAttributeMetadata
+                        {
+                            SchemaName = "new_" + tableName.ToLower() + "_id",
+                            DisplayName = new Label(tableName + " Lookup", 1033),
+                            RequiredLevel = new AttributeRequiredLevelManagedProperty(AttributeRequiredLevel.None),
+                            Description = new Label("Lookup for " + tableName, 1033)
+                        }
+                    };
 
-            var createRelationshipRequest = new CreateRelationshipRequest
-            {
-                EntityName = tableName,
-                Relationship = relationshipMetadata
-            };
+                    // Execute the request
+                    serviceClient.Execute(oneToManyRelationshipRequest);
+                    Console.WriteLine($"The one-to-many relationship '{relationshipName}' has been created between '{tableName}' and '{relatedTableName}'.");
+                    break;
 
-            serviceClient.Execute(createRelationshipRequest);
+                case "ManyToMany":
+                    // Define the Many-to-Many relationship
+                    var manyToManyRelationshipRequest = new CreateManyToManyRequest
+                    {
+                        IntersectEntitySchemaName = relationshipName,
+                        ManyToManyRelationship = new ManyToManyRelationshipMetadata
+                        {
+                            SchemaName = relationshipName,
+                            Entity1LogicalName = tableName,
+                            Entity2LogicalName = relatedTableName,
+                            Entity1AssociatedMenuConfiguration = new AssociatedMenuConfiguration
+                            {
+                                Behavior = AssociatedMenuBehavior.UseLabel,
+                                Group = AssociatedMenuGroup.Details,
+                                Label = new Label("Related " + tableName, 1033),
+                                Order = 10000
+                            },
+                            Entity2AssociatedMenuConfiguration = new AssociatedMenuConfiguration
+                            {
+                                Behavior = AssociatedMenuBehavior.UseLabel,
+                                Group = AssociatedMenuGroup.Details,
+                                Label = new Label("Related " + relatedTableName, 1033),
+                                Order = 10000
+                            }
+                        }
+                    };
+
+                    // Execute the request
+                    serviceClient.Execute(manyToManyRelationshipRequest);
+                    Console.WriteLine($"The many-to-many relationship '{relationshipName}' has been created between '{tableName}' and '{relatedTableName}'.");
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Relationship type '{relationshipType}' is not supported.");
+            }
         }
     }
 }

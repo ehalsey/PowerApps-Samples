@@ -2,6 +2,7 @@
   "TableName": "new_customtable",
   "TableDisplayName": "Custom Table",
   "TableDescription": "A custom table created from JSON",
+  "TableDisplayCollectionName": "Custom Tables",
   "Fields": [
     {
       "FieldName": "new_customfield1",
