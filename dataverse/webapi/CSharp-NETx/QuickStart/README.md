@@ -37,3 +37,9 @@ This sample doesn't require any setup other that specifying the test environment
 ### Clean up
 
 This sample doesn't require any clean up since it doesn't create any Dataverse table rows.
+
+________________
+efh changes on Windows
+DATAVERSE_CLIENT_SECRET=<your-client-secret>
+
+On Linux/Mac, use: export DATAVERSE_CLIENT_SECRET=<your-client-secret>

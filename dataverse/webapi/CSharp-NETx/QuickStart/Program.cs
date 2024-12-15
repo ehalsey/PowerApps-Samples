@@ -1,4 +1,4 @@
-﻿using Microsoft.Identity.Client;  // Microsoft Authentication Library (MSAL)
+﻿using Microsoft.Identity.Client; // Microsoft Authentication Library (MSAL)
 using System;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -14,84 +14,89 @@ namespace PowerApps.Samples
     {
         static async Task Main()
         {
-            // TODO Specify the Dataverse environment name to connect with.
-            // See https://learn.microsoft.com/power-apps/developer/data-platform/webapi/compose-http-requests-handle-errors#web-api-url-and-versions
-            string resource = "https://<env-name>.api.<region>.dynamics.com";
+            // Dataverse environment URL (replace with your environment's URL)
+            string resource = "https://pas-poc-dev.api.crm.dynamics.com";
 
-            // Azure Active Directory app registration shared by all Power App samples.
-            var clientId = "51f81489-12ee-4a9e-aaae-a2591f45987d";
-            var redirectUri = "http://localhost"; // Loopback for the interactive login.
+            // Azure Active Directory App Registration credentials
+            string clientId = "ac51513c-5916-4039-b4c8-1aa2685637bb";
+            string clientSecret = Environment.GetEnvironmentVariable("DATAVERSE_CLIENT_SECRET") 
+                                  ?? throw new InvalidOperationException("Client secret not found in environment variables.");
+            string tenantId = "bd804b61-4e2b-4ca6-b036-a79cb2f80e31"; // Replace with your Azure AD tenant ID
 
-            // For your custom apps, you will need to register them with Azure AD yourself.
-            // See https://learn.microsoft.com/powerapps/developer/data-platform/walkthrough-register-app-azure-active-directory
+            // Authority URL for Azure AD
+            string authority = $"https://login.microsoftonline.com/{tenantId}";
 
-            #region Authentication
-
-            var authBuilder = PublicClientApplicationBuilder.Create(clientId)
-                             .WithAuthority(AadAuthorityAudience.AzureAdMultipleOrgs)
-                             .WithRedirectUri(redirectUri)
-                             .Build();
-            var scope = resource + "/user_impersonation";
-            string[] scopes = { scope };
-
-            AuthenticationResult token =
-               await authBuilder.AcquireTokenInteractive(scopes).ExecuteAsync();
-            #endregion Authentication
-
-            #region Client configuration
-
-            var client = new HttpClient
+            try
             {
-                // See https://learn.microsoft.com/powerapps/developer/data-platform/webapi/compose-http-requests-handle-errors#web-api-url-and-versions
-                BaseAddress = new Uri(resource + "/api/data/v9.2/"),
-                Timeout = new TimeSpan(0, 2, 0)    // Standard two minute timeout on web service calls.
-            };
+                #region Authentication
 
-            // Default headers for each Web API call.
-            // See https://learn.microsoft.com/powerapps/developer/data-platform/webapi/compose-http-requests-handle-errors#http-headers
-            HttpRequestHeaders headers = client.DefaultRequestHeaders;
-            headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
-            headers.Add("OData-MaxVersion", "4.0");
-            headers.Add("OData-Version", "4.0");
-            headers.Accept.Add(
-                new MediaTypeWithQualityHeaderValue("application/json"));
-            #endregion Client configuration
+                // Build MSAL client
+                var authBuilder = ConfidentialClientApplicationBuilder.Create(clientId)
+                                    .WithClientSecret(clientSecret)
+                                    .WithAuthority(new Uri(authority))
+                                    .Build();
 
-            #region Web API call
+                // Set scope for Dataverse API
+                string[] scopes = { $"{resource}/.default" };
 
-            // Invoke the Web API 'WhoAmI' unbound function.
-            // See https://learn.microsoft.com/powerapps/developer/data-platform/webapi/compose-http-requests-handle-errors
-            // See https://learn.microsoft.com/powerapps/developer/data-platform/webapi/use-web-api-functions#unbound-functions
-            var response = await client.GetAsync("WhoAmI");
+                // Acquire token for client
+                AuthenticationResult token = await authBuilder.AcquireTokenForClient(scopes).ExecuteAsync();
+                Console.WriteLine("Successfully authenticated!");
 
-            if (response.IsSuccessStatusCode)
-            {
-                // Parse the JSON formatted service response (WhoAmIResponse) to obtain the user ID value.
-                // See https://learn.microsoft.com/power-apps/developer/data-platform/webapi/reference/whoamiresponse
-                Guid userId = new();
+                #endregion Authentication
 
-                string jsonContent = await response.Content.ReadAsStringAsync();
+                #region Client Configuration
 
-                // Using System.Text.Json
-                using (JsonDocument doc = JsonDocument.Parse(jsonContent))
+                // Configure HttpClient for Dataverse API
+                using var client = new HttpClient
                 {
-                    JsonElement root = doc.RootElement;
-                    JsonElement userIdElement = root.GetProperty("UserId");
-                    userId = userIdElement.GetGuid();
+                    BaseAddress = new Uri($"{resource}/api/data/v9.2/"),
+                    Timeout = TimeSpan.FromMinutes(2) // Standard 2-minute timeout
+                };
+
+                // Add default headers
+                HttpRequestHeaders headers = client.DefaultRequestHeaders;
+                headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
+                headers.Add("OData-MaxVersion", "4.0");
+                headers.Add("OData-Version", "4.0");
+                headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                #endregion Client Configuration
+
+                #region Web API Call
+
+                // Invoke the Web API 'WhoAmI' unbound function
+                HttpResponseMessage response = await client.GetAsync("WhoAmI");
+
+                if (response.IsSuccessStatusCode)
+                {
+                    // Parse the JSON formatted service response to obtain the user ID value
+                    string jsonContent = await response.Content.ReadAsStringAsync();
+
+                    using JsonDocument doc = JsonDocument.Parse(jsonContent);
+                    Guid userId = doc.RootElement.GetProperty("UserId").GetGuid();
+
+                    Console.WriteLine($"Your user ID is {userId}");
+                }
+                else
+                {
+                    Console.WriteLine($"Web API call failed: {response.StatusCode} - {response.ReasonPhrase}");
                 }
 
-                // Alternate code, but requires that the WhoAmIResponse class be defined (see below).
-                // WhoAmIResponse whoAmIresponse = JsonSerializer.Deserialize<WhoAmIResponse>(jsonContent);
-                // userId = whoAmIresponse.UserId;
-
-                Console.WriteLine($"Your user ID is {userId}");
+                #endregion Web API Call
             }
-            else
+            catch (MsalServiceException ex)
             {
-                Console.WriteLine("Web API call failed");
-                Console.WriteLine("Reason: " + response.ReasonPhrase);
+                Console.WriteLine($"Authentication error: {ex.Message}");
             }
-            #endregion Web API call
+            catch (HttpRequestException ex)
+            {
+                Console.WriteLine($"HTTP error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Unexpected error: {ex.Message}");
+            }
         }
     }
 
