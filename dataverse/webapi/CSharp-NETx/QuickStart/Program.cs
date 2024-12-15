@@ -4,111 +4,153 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Text;
 
 namespace PowerApps.Samples
 {
-    /// <summary>
-    /// Demonstrates Azure authentication and execution of a Dataverse Web API function.
-    /// </summary>
-    class Program
+    internal class Program
     {
+        static readonly int numberOfRecords = 100;
+        static readonly string tableSchemaName = "sample_Example";
+        static readonly string tableSetName = "sample_examples";
+        static readonly string tableLogicalName = tableSchemaName.ToLower(); //sample_example
+        static readonly string tablePrimaryKeyName = "sample_exampleid";
+        static readonly string tablePrimaryNameColumnName = "sample_name";
+
+
         static async Task Main()
         {
-            // Dataverse environment URL (replace with your environment's URL)
-            string resource = "https://pas-poc-dev.api.crm.dynamics.com";
+            Config config = App.InitializeApp();
 
-            // Azure Active Directory App Registration credentials
-            string clientId = "ac51513c-5916-4039-b4c8-1aa2685637bb";
-            string clientSecret = Environment.GetEnvironmentVariable("DATAVERSE_CLIENT_SECRET") 
-                                  ?? throw new InvalidOperationException("Client secret not found in environment variables.");
-            string tenantId = "bd804b61-4e2b-4ca6-b036-a79cb2f80e31"; // Replace with your Azure AD tenant ID
-
-            // Authority URL for Azure AD
-            string authority = $"https://login.microsoftonline.com/{tenantId}";
+            var service = new Service(config);
 
             try
             {
-                #region Authentication
+                await Utility.CreateExampleTable(service: service, tableSchemaName: tableSchemaName, isElastic: Settings.UseElastic);
 
-                // Build MSAL client
-                var authBuilder = ConfidentialClientApplicationBuilder.Create(clientId)
-                                    .WithClientSecret(clientSecret)
-                                    .WithAuthority(new Uri(authority))
-                                    .Build();
-
-                // Set scope for Dataverse API
-                string[] scopes = { $"{resource}/.default" };
-
-                // Acquire token for client
-                AuthenticationResult token = await authBuilder.AcquireTokenForClient(scopes).ExecuteAsync();
-                Console.WriteLine("Successfully authenticated!");
-
-                #endregion Authentication
-
-                #region Client Configuration
-
-                // Configure HttpClient for Dataverse API
-                using var client = new HttpClient
+                if (!await Utility.IsMessageAvailable(service: service, entityLogicalName: tableLogicalName, messageName: "CreateMultiple"))
                 {
-                    BaseAddress = new Uri($"{resource}/api/data/v9.2/"),
-                    Timeout = TimeSpan.FromMinutes(2) // Standard 2-minute timeout
-                };
-
-                // Add default headers
-                HttpRequestHeaders headers = client.DefaultRequestHeaders;
-                headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
-                headers.Add("OData-MaxVersion", "4.0");
-                headers.Add("OData-Version", "4.0");
-                headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-                #endregion Client Configuration
-
-                #region Web API Call
-
-                // Invoke the Web API 'WhoAmI' unbound function
-                HttpResponseMessage response = await client.GetAsync("WhoAmI");
-
-                if (response.IsSuccessStatusCode)
-                {
-                    // Parse the JSON formatted service response to obtain the user ID value
-                    string jsonContent = await response.Content.ReadAsStringAsync();
-
-                    using JsonDocument doc = JsonDocument.Parse(jsonContent);
-                    Guid userId = doc.RootElement.GetProperty("UserId").GetGuid();
-
-                    Console.WriteLine($"Your user ID is {userId}");
+                    Console.WriteLine("The CreateMultiple message is not available " +
+                    $"for the {tableSchemaName} table.");
                 }
                 else
                 {
-                    Console.WriteLine($"Web API call failed: {response.StatusCode} - {response.ReasonPhrase}");
+
+                    // Create a List of entity instances.
+                    Console.WriteLine($"\nPreparing {numberOfRecords} records to create..");
+                    List<JObject> entityList = new();
+                    // Populate the list with the number of records to test.
+                    for (int i = 0; i < numberOfRecords; i++)
+                    {
+                        entityList.Add(new JObject() {
+                            {"sample_name", $"sample record {i+1:0000000}"},
+                            // Each record MUST have the @odata.type specified.
+                            {"@odata.type",$"Microsoft.Dynamics.CRM.{tableLogicalName}" }
+                        });
+                    }
+
+                    // Use CreateMultipleRequest
+                    CreateMultipleRequest createMultipleRequest = new(
+                        entitySetName: tableSetName,
+                        targets: entityList);
+
+                    // Add a tag optional parameter to set a shared variable to be available to a plug-in.
+                    // See https://learn.microsoft.com/power-apps/developer/data-platform/optional-parameters?tabs=webapi#add-a-shared-variable-to-the-plugin-execution-context
+                    createMultipleRequest.RequestUri = new Uri(
+                        createMultipleRequest.RequestUri.ToString() + "?tag=CreateUpdateMultiple",
+                        uriKind: UriKind.Relative);
+
+                    if (Settings.BypassCustomPluginExecution)
+                    {
+#pragma warning disable CS0162 // Unreachable code detected: Configurable by setting
+                        createMultipleRequest.Headers.Add("MSCRM.BypassCustomPluginExecution", "true");
+#pragma warning restore CS0162 // Unreachable code detected: Configurable by setting
+                    }
+
+
+                    Console.WriteLine($"Sending POST request to /{tableSetName}/Microsoft.Dynamics.CRM.CreateMultiple");
+                    Stopwatch createStopwatch = Stopwatch.StartNew();
+                    // Send the request
+                    var createMultipleResponse = await service.SendAsync<CreateMultipleResponse>(createMultipleRequest);
+                    Console.WriteLine($"\tCreated {entityList.Count} records " +
+                        $"in {Math.Round(createStopwatch.Elapsed.TotalSeconds)} seconds.");
+
+                    Console.WriteLine($"\nPreparing {numberOfRecords} records to update..");
+
+                    // Assign ID values to created items to prepare to update them.
+                    for (int i = 0; i < createMultipleResponse.Ids.Length; i++)
+                    {
+                        entityList[i].Add(tablePrimaryKeyName, createMultipleResponse.Ids[i]);
+
+                    }
+
+                    // Update the sample_name value:
+                    foreach (JObject entity in entityList)
+                    {
+                        entity[tablePrimaryNameColumnName] += " Updated";
+                    }
+
+                    // Use UpdateMultipleRequest
+                    UpdateMultipleRequest updateMultipleRequest = new(
+                        entitySetName: tableSetName,
+                        targets: entityList);
+
+                    // Add a tag optional parameter to set a shared variable to be available to a plug-in.
+                    // See https://learn.microsoft.com/power-apps/developer/data-platform/optional-parameters?tabs=webapi#add-a-shared-variable-to-the-plugin-execution-context
+                    updateMultipleRequest.RequestUri = new Uri(updateMultipleRequest.RequestUri.ToString() + "?tag=CreateUpdateMultiple", uriKind: UriKind.Relative);
+
+                    if (Settings.BypassCustomPluginExecution)
+                    {
+#pragma warning disable CS0162 // Unreachable code detected: Configurable by setting
+                        updateMultipleRequest.Headers.Add("MSCRM.BypassCustomPluginExecution", "true");
+#pragma warning restore CS0162 // Unreachable code detected: Configurable by setting
+                    }
+
+                    Console.WriteLine($"Sending POST request to /{tableSetName}/Microsoft.Dynamics.CRM.UpdateMultiple");
+                    Stopwatch updateStopwatch = Stopwatch.StartNew();
+                    // Send the request
+                    await service.SendAsync(updateMultipleRequest);
+                    updateStopwatch.Stop();
+                    Console.WriteLine($"\tUpdated {entityList.Count} records " +
+                        $"in {Math.Round(updateStopwatch.Elapsed.TotalSeconds)} seconds.");
+
+                    // Delete created rows asynchronously
+                    // When testing plug-ins, set break point here to observe data
+                    Console.WriteLine($"\nStarting asynchronous bulk delete " +
+                        $"of {createMultipleResponse.Ids.Length} created records...");
+
+                    string deleteJobStatus = await Utility.BulkDeleteRecordsByIds(
+                        service: service,
+                        tableLogicalName: tableLogicalName,
+                        iDs: createMultipleResponse.Ids,
+                        jobName: "Deleting records created by CreateUpdateMultiple Sample.");
+
+                    Console.WriteLine($"\tBulk Delete status: {deleteJobStatus}\n");
+
+
                 }
 
-                #endregion Web API Call
-            }
-            catch (MsalServiceException ex)
-            {
-                Console.WriteLine($"Authentication error: {ex.Message}");
-            }
-            catch (HttpRequestException ex)
-            {
-                Console.WriteLine($"HTTP error: {ex.Message}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Unexpected error: {ex.Message}");
+                Console.WriteLine("The application terminated with an error.");
+                Console.WriteLine(ex.Message);
+            }
+            finally
+            {
+                await Utility.DeleteExampleTable(service: service, tableSchemaName: tableSchemaName);
             }
         }
     }
-
-    /// <summary>
-    /// WhoAmIResponse class definition 
-    /// </summary>
-    /// <remarks>To be used for JSON deserialization.</remarks>
-    /// <see cref="https://learn.microsoft.com/power-apps/developer/data-platform/webapi/reference/whoamiresponse"/>
-    public class WhoAmIResponse
-    {
-        public Guid BusinessUnitId { get; set; }
-        public Guid UserId { get; set; }
-        public Guid OrganizationId { get; set; }
-    }
+}
+/// <summary>
+/// WhoAmIResponse class definition 
+/// </summary>
+/// <remarks>To be used for JSON deserialization.</remarks>
+/// <see cref="https://learn.microsoft.com/power-apps/developer/data-platform/webapi/reference/whoamiresponse"/>
+public class WhoAmIResponse
+{
+    public Guid BusinessUnitId { get; set; }
+    public Guid UserId { get; set; }
+    public Guid OrganizationId { get; set; }
 }

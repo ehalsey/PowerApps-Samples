@@ -51,7 +51,7 @@ namespace PowerApps.Samples
         /// </summary>
         /// <returns>An Access token</returns>
         /// <exception cref="Exception"></exception>
-        internal static async Task<string> GetToken()
+        internal static async Task<string> GetTokenUsingUserNamePassword()
         {
             List<string> scopes = new() { $"{appSettings["Url"]}/user_impersonation" };
 
@@ -114,6 +114,47 @@ namespace PowerApps.Samples
             }
         }
 
+internal static async Task<string> GetToken()
+{
+    // Replace the user_impersonation scope with a client credentials scope
+    List<string> scopes = new() { $"{appSettings["Url"]}/.default" };
+
+    try
+    {
+        // Use Client ID and Client Secret for authentication
+        IConfidentialClientApplication confidentialApp = ConfidentialClientApplicationBuilder.Create(appSettings["ClientId"])
+            .WithClientSecret(appSettings["ClientSecret"])
+            .WithTenantId(appSettings["TenantId"])
+            .WithAuthority(new Uri(appSettings["Authority"]))
+            .Build();
+
+        AuthenticationResult result = await confidentialApp.AcquireTokenForClient(scopes)
+            .ExecuteAsync();
+
+        if (result != null && !string.IsNullOrWhiteSpace(result.AccessToken))
+        {
+            return result.AccessToken;
+        }
+        else
+        {
+            throw new Exception("Failed to acquire access token.");
+        }
+    }
+    catch (MsalServiceException ex)
+    {
+        // Handle specific exceptions related to authentication
+        throw new Exception($"MSAL Service Exception: {ex.Message}", ex);
+    }
+    catch (Exception ex)
+    {
+        // Handle other exceptions
+        throw new Exception($"An error occurred while acquiring the token: {ex.Message}", ex);
+    }
+}
+
+
+
+    
     }
 }
 
